@@ -1,0 +1,97 @@
+name: Watch OpenRGB → Trigger OBS Build
+
+on:
+  schedule:
+    # Runs every hour at :00. Change to e.g. '*/30 * * * *' for every 30 min.
+    - cron: '0 * * * *'
+  # Lets you trigger manually from Actions tab any time
+  workflow_dispatch:
+
+# Allow the built-in GITHUB_TOKEN to commit .last_commit back to this repo
+permissions:
+  contents: write
+
+jobs:
+  watch-and-trigger:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout this repo so we can read/write .last_commit ────────────
+      - name: Checkout watcher repo
+        uses: actions/checkout@v4
+
+      # ── 2. Fetch latest commit SHA from upstream OpenRGB (no token needed) ─
+      - name: Fetch latest upstream commit SHA
+        id: upstream
+        run: |
+          RESPONSE=$(curl -sf \
+            "https://gitlab.com/api/v4/projects/CalcProgrammer1%2FOpenRGB/repository/branches/master")
+
+          if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
+            echo "❌ GitLab API call failed — aborting."
+            exit 1
+          fi
+
+          LATEST=$(echo "$RESPONSE" | jq -r '.commit.id')
+
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "❌ Could not parse commit SHA from API response — aborting."
+            exit 1
+          fi
+
+          echo "✅ Latest upstream SHA: $LATEST"
+          echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
+
+      # ── 3. Compare with what we last built ─────────────────────────────────
+      - name: Compare with last built commit
+        id: compare
+        run: |
+          LATEST="${{ steps.upstream.outputs.sha }}"
+          KNOWN=$(cat .last_commit 2>/dev/null | tr -d '[:space:]')
+
+          echo "Latest : $LATEST"
+          echo "Known  : ${KNOWN:-<none yet>}"
+
+          if [ "$LATEST" = "$KNOWN" ]; then
+            echo "✅ No new commits. Nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "🆕 New commit detected!"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 4. Trigger OBS runservice (only when there's something new) ─────────
+      - name: Trigger OBS build
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          echo "🚀 Triggering OBS source service run..."
+          HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
+            -X POST \
+            "https://build.opensuse.org/trigger/runservice?project=${{ secrets.OBS_PROJECT }}&package=${{ secrets.OBS_PACKAGE }}")
+
+          echo "OBS HTTP response: $HTTP"
+
+          if [ "$HTTP" != "200" ]; then
+            echo "❌ OBS trigger failed (HTTP $HTTP). NOT updating .last_commit — will retry next run."
+            exit 1
+          fi
+
+          echo "✅ OBS build triggered successfully."
+
+      # ── 5. Persist the new SHA so we don't re-trigger on the next run ───────
+      - name: Update .last_commit
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          LATEST="${{ steps.upstream.outputs.sha }}"
+          SHORT="${LATEST:0:8}"
+
+          echo "$LATEST" > .last_commit
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last_commit
+          git commit -m "chore: built upstream commit ${SHORT}"
+          git push
+
+          echo "✅ .last_commit updated to ${LATEST}"
