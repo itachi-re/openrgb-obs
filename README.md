@@ -1,11 +1,26 @@
-```markdown
 # 🔄 openrgb-obs-watcher
 
-[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/itachi-re/openrgb-obs-watcher/watch-and-build.yml?branch=main&style=flat-square&label=watcher)](https://github.com/itachi-re/openrgb-obs-watcher/actions/workflows/watch-and-build.yml)
-[![OBS Package](https://img.shields.io/badge/OBS-home:itachi_re:openrgb-blue?style=flat-square&logo=opensuse)](https://build.opensuse.org/package/show/home:itachi_re/openrgb)
-[![GitLab upstream](https://img.shields.io/badge/upstream-OpenRGB-orange?style=flat-square&logo=gitlab)](https://gitlab.com/CalcProgrammer1/OpenRGB)
+<div align="center">
 
-Automatically trigger a rebuild of the [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB) package on the [openSUSE Build Service](https://build.opensuse.org) whenever a new commit lands on the upstream `master` branch.
+[![Watcher Status](https://img.shields.io/github/actions/workflow/status/itachi-re/openrgb-obs-watcher/watch-and-build.yml?branch=main&style=for-the-badge&label=Watcher&logo=github-actions&logoColor=white)](https://github.com/itachi-re/openrgb-obs-watcher/actions/workflows/watch-and-build.yml)
+[![OBS Package](https://img.shields.io/badge/OBS-home:itachi__re:openrgb-73BA25?style=for-the-badge&logo=opensuse&logoColor=white)](https://build.opensuse.org/package/show/home:itachi_re/openrgb)
+[![GitLab Upstream](https://img.shields.io/badge/Upstream-OpenRGB-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)](https://gitlab.com/CalcProgrammer1/OpenRGB)
+[![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/itachi-re/openrgb-obs-watcher?style=for-the-badge&logo=git&logoColor=white)](https://github.com/itachi-re/openrgb-obs-watcher/commits/main)
+
+<br/>
+
+**A zero-touch GitHub Actions bridge that keeps your OBS-packaged OpenRGB builds perpetually fresh — no manual intervention, no stale sources.**
+
+<br/>
+
+```
+ GitLab master ──► GitHub Actions (hourly) ──► OBS trigger ──► Fresh build
+                        ↑                            |
+                        └──── SHA tracking ──────────┘
+```
+
+</div>
 
 ---
 
@@ -13,91 +28,122 @@ Automatically trigger a rebuild of the [OpenRGB](https://gitlab.com/CalcProgramm
 
 - [Why this exists](#-why-this-exists)
 - [How it works](#-how-it-works)
-- [One‑time setup](#%EF%B8%8F-one-time-setup)
+- [One-time setup](#️-one-time-setup)
   - [1. Create the OBS token](#1--create-the-obs-token)
   - [2. Add GitHub Secrets](#2--add-github-secrets)
   - [3. Enable workflow write permissions](#3--enable-workflow-write-permissions)
-  - [4. Push and you’re done](#4--push-this-repo-to-github-and-youre-done)
-- [Repository files](#-repository-files)
+  - [4. Push and you're done](#4--push-and-youre-done)
+- [Repository structure](#-repository-structure)
 - [Adjusting the schedule](#-adjusting-the-schedule)
-- [Failure behaviour](#-failure-behaviour)
+- [Failure behaviour & safety model](#-failure-behaviour--safety-model)
+- [FAQ](#-faq)
 - [Links](#-links)
 
 ---
 
 ## 🤔 Why this exists
 
-The OBS `_service` file (obs_scm) can re‑fetch the latest source, but OBS only runs the service when manually triggered or when the package changes.  
-This tiny GitHub Actions workflow acts as a bridge: it **watches the upstream GitLab `master` branch hourly** and **pokes OBS** whenever a new commit appears, so the package always builds the very latest OpenRGB code without any manual intervention.
+OBS's built-in `_service` file (`obs_scm`) can re-fetch the latest upstream source — **but only when manually triggered or when the package itself changes.** This means your locally-hosted OpenRGB package can silently fall days or weeks behind the GitLab `master` branch without anyone noticing.
+
+`openrgb-obs-watcher` solves this with a minimal, self-contained GitHub Actions workflow:
+
+| Without this watcher | With this watcher |
+|---|---|
+| 🔴 OBS builds only when manually poked | 🟢 OBS builds within an hour of every upstream commit |
+| 🔴 Stale source possible for days | 🟢 Source is always the latest GitLab `master` |
+| 🔴 Requires developer attention | 🟢 Fully autonomous after one-time setup |
+
+> This approach requires **no GitLab token**, no webhooks on the upstream repo, and no third-party services — just the GitLab public API and your existing OBS account.
 
 ---
 
 ## ⚙️ How it works
 
 ```mermaid
-graph TD
-    A[GitHub Actions cron<br/>every hour] --> B{Fetch latest commit<br/>from GitLab API}
-    B --> C{Changed from<br/>last stored SHA?}
-    C -- NO --> D[Exit quietly]
-    C -- YES --> E[POST trigger to OBS]
-    E --> F[Write new SHA to .last_commit]
-    F --> G[Commit & push back to repo]
-    G --> H[OBS re‑runs _service,<br/>pulls fresh source, rebuilds]
+flowchart TD
+    A([🕐 GitHub Actions\ncron — every hour]) --> B
+
+    B[📡 Fetch latest commit SHA\nfrom GitLab public API\nno token required] --> C
+
+    C{🔍 SHA changed\nfrom .last_commit?}
+
+    C -- ❌ No change --> D([🔇 Exit silently\nno action taken])
+
+    C -- ✅ New commit --> E[🚀 HTTP POST to OBS\ntrigger/runservice endpoint\nusing OBS_TOKEN secret]
+
+    E --> F{📬 OBS returned\nHTTP 200?}
+
+    F -- ❌ Non-200 / error --> G([💥 Workflow fails\n.last_commit NOT updated\nretry on next run])
+
+    F -- ✅ Success --> H[✏️ Write new SHA\nto .last_commit]
+
+    H --> I[📦 Commit & push\n.last_commit back\nto this repo]
+
+    I --> J([🏗️ OBS re-runs _service\nclones fresh GitLab master\nschedules new build])
 ```
 
-1. The workflow fetches the `master` branch info from GitLab’s public API (no token needed).
-2. It compares the returned `commit.id` with the SHA stored inside `.last_commit`.
-3. **If unchanged** → nothing happens, workflow ends silently.
-4. **If changed** → a simple HTTP request hits the OBS trigger endpoint, OBS re‑runs the source service (which clones the latest GitLab master) and schedules a new build.
-5. The new SHA is written to `.last_commit`, committed, and pushed back to this repository so we don’t trigger repeatedly for the same commit.
+### Step-by-step breakdown
+
+1. **Fetch** — The workflow hits `gitlab.com/api/v4/projects/.../repository/branches/master` (public endpoint, no auth required) and extracts `commit.id`.
+2. **Compare** — The returned SHA is diff'd against the content of `.last_commit` stored in this repo.
+3. **No change** → workflow exits immediately and silently. No OBS calls are made.
+4. **Changed** → a single `POST` with your `OBS_TOKEN` in the `Authorization` header hits the OBS trigger endpoint, causing OBS to re-run the `_service` file, re-clone the GitLab repo at its latest `HEAD`, and queue a fresh build.
+5. **Persist** — The new SHA is written to `.last_commit`, committed with a `[bot]` message, and pushed back. The next hourly run will see this SHA and skip silently unless yet another commit has landed upstream.
 
 ---
 
-## 🛠️ One‑time setup
+## 🛠️ One-time setup
+
+> **Total time:** ~5 minutes  
+> **Prerequisites:** An OBS account with `osc` configured and your `home:itachi_re:openrgb` project already created.
+
+---
 
 ### 1 — Create the OBS token
 
-On any machine where `osc` is configured with your OBS account:
+Generate a package-scoped trigger token using `osc`. Package-scoped tokens can only trigger builds for the specified package — safer than a global token.
 
 ```bash
 osc token --create home:itachi_re:openrgb openrgb
-# ⚠️ Save the token string that gets printed
+# Output: <token id="..." string="TOKEN_STRING_HERE" .../>
+# ⚠️  Copy TOKEN_STRING_HERE — it will not be shown again.
 ```
 
-Test the token immediately:
+**Verify the token works before continuing:**
 
 ```bash
 curl -sf \
   -H "Authorization: Token YOUR_TOKEN_STRING" \
   -X POST \
-  "https://build.opensuse.org/trigger/runservice?project=home:itachi_re:openrgb&package=openrgb"
-# Should return HTTP 200 and no other output
+  "https://build.opensuse.org/trigger/runservice?project=home:itachi_re:openrgb&package=openrgb" \
+  && echo "✅ Token works!" || echo "❌ Something went wrong"
 ```
 
-> **Note**  
-> Replace `home:itachi_re:openrgb` with your actual OBS project namespace. The same values will be used in the next step.
+A `✅` response means OBS accepted the trigger and will re-run your `_service`. If you see `❌`, double-check the project/package names and token string.
 
 ---
 
 ### 2 — Add GitHub Secrets
 
-Go to your repository on GitHub → **Settings → Secrets and variables → Actions → New repository secret**.
+Navigate to your repository: **Settings → Secrets and variables → Actions → New repository secret**
 
-Add the following three secrets:
-
-| Secret name      | Example value                   | Description                                  |
-|------------------|----------------------------------|----------------------------------------------|
-| `OBS_TOKEN`      | `abc123...`                      | The token created with `osc token --create`  |
-| `OBS_PROJECT`    | `home:itachi_re:openrgb`         | Your OBS project that contains the package   |
-| `OBS_PACKAGE`    | `openrgb`                        | The package name inside that project         |
+| Secret name | Example value | Description |
+|---|---|---|
+| `OBS_TOKEN` | `abc123xyz...` | The token string printed by `osc token --create` |
+| `OBS_PROJECT` | `home:itachi_re:openrgb` | Full OBS project name containing the package |
+| `OBS_PACKAGE` | `openrgb` | The package name inside the OBS project |
 
 <details>
-<summary>📷 Where to add secrets (click to expand)</summary>
+<summary>📷 Step-by-step screenshot guide</summary>
 
-1. Navigate to your repository’s **Settings** tab.
-2. Click **Secrets and variables** → **Actions** in the left sidebar.
-3. Press the green **New repository secret** button.
-4. Enter the name (e.g., `OBS_TOKEN`) and paste its value, then click **Add secret**.
+<br/>
+
+1. Open your repository on GitHub and click the **Settings** tab (top navigation bar).
+2. In the left sidebar, expand **Secrets and variables** → click **Actions**.
+3. Click the green **New repository secret** button (top right).
+4. Enter the **Name** (e.g. `OBS_TOKEN`) and paste the **Secret** value.
+5. Click **Add secret**. The value is now encrypted and only accessible to workflow runs.
+6. Repeat for `OBS_PROJECT` and `OBS_PACKAGE`.
 
 </details>
 
@@ -105,71 +151,159 @@ Add the following three secrets:
 
 ### 3 — Enable workflow write permissions
 
-By default GitHub Actions cannot push commits back to the repository.  
-We need to grant write access:
+By default, GitHub Actions tokens are read-only. The watcher needs write access to commit the updated `.last_commit` file back to this repo.
 
-- Go to **Settings → Actions → General**.
-- Under **Workflow permissions** select **“Read and write permissions”**.
-- Click **Save**.
+- Go to **Settings → Actions → General**
+- Scroll to **Workflow permissions**
+- Select **Read and write permissions**
+- Click **Save**
 
-This allows the workflow to commit the updated `.last_commit` file after a successful trigger.
-
----
-
-### 4 — Push this repo to GitHub and you’re done
-
-The workflow is scheduled to run every hour.  
-To test it immediately, go to the **Actions** tab, select the **“Watch OpenRGB → Trigger OBS Build”** workflow, and press **“Run workflow”**.
+> **Security note:** This only grants write access to *this* repository. The token is ephemeral, scoped per-run, and cannot be extracted from workflow logs.
 
 ---
 
-## 📁 Repository files
+### 4 — Push and you're done
 
-| File | Purpose |
-|------|---------|
-| `.github/workflows/watch-and-build.yml` | The GitHub Actions workflow definition. |
-| `.last_commit` | Stores the SHA of the latest upstream commit that has already triggered a build. |
+```bash
+git add .
+git commit -m "chore: initial watcher setup"
+git push origin main
+```
 
-The workflow reads and updates `.last_commit` automatically – you never need to edit it manually.
+The workflow will run on its hourly schedule automatically. To trigger a manual test run immediately:
+
+1. Open the **Actions** tab in your repository.
+2. Select **Watch OpenRGB → Trigger OBS Build** from the left sidebar.
+3. Click **Run workflow** → **Run workflow** (green button).
+4. Watch the logs — if a new upstream commit exists, you'll see the OBS trigger fire in real time.
+
+---
+
+## 📁 Repository structure
+
+```
+openrgb-obs-watcher/
+│
+├── .github/
+│   └── workflows/
+│       └── watch-and-build.yml   # The complete watcher — fetch, compare, trigger, persist
+│
+└── .last_commit                  # Single-line file: SHA of the last upstream commit
+                                  # that successfully triggered an OBS build.
+                                  # Auto-managed by the workflow — do not edit manually.
+```
+
+**That's it.** Two files. No dependencies, no npm, no Docker, no external services beyond GitHub Actions, the GitLab public API, and OBS.
 
 ---
 
 ## 🕒 Adjusting the schedule
 
-Edit the `cron` line in `.github/workflows/watch-and-build.yml` to change how often the watcher checks for new commits.
+The cron expression lives at the top of `.github/workflows/watch-and-build.yml`:
 
 ```yaml
 on:
   schedule:
-    - cron: '0 * * * *'      # every hour (default)
-    # - cron: '*/30 * * * *'  # every 30 minutes
-    # - cron: '0 */2 * * *'   # every 2 hours
+    - cron: '0 * * * *'       # ← every hour on the hour (default)
+  workflow_dispatch:           # ← allows manual runs from the Actions tab
 ```
 
-> ⚠️ GitHub Actions schedules can be delayed during high load; exact accuracy is not guaranteed.
+Common alternatives:
+
+```yaml
+# Every 30 minutes
+- cron: '*/30 * * * *'
+
+# Every 2 hours
+- cron: '0 */2 * * *'
+
+# Twice a day (midnight and noon UTC)
+- cron: '0 0,12 * * *'
+
+# Once a day at 06:00 UTC
+- cron: '0 6 * * *'
+```
+
+> ⚠️ **GitHub scheduling caveat:** Scheduled workflows can be delayed by several minutes (sometimes longer) during periods of high GitHub Actions load. For most packaging use cases this is perfectly acceptable — a 10-minute delay on an hourly check still keeps builds far fresher than any manual process.
+
+> ⚠️ **Inactivity caveat:** GitHub automatically disables scheduled workflows in repositories with **no activity for 60 days**. Re-enable from the Actions tab if this happens.
 
 ---
 
-## ❌ Failure behaviour
+## ❌ Failure behaviour & safety model
 
-The workflow is designed to be safe:
+The watcher is designed around a single principle: **never leave `.last_commit` in an inconsistent state.**
 
-- **GitLab API is unreachable** → workflow fails, `.last_commit` is **not** updated → retry on the next scheduled run.
-- **OBS trigger returns a non‑200 status** → workflow fails, `.last_commit` is **not** updated → retry next run.
-- **OBS trigger succeeds but the `git push` fails** (e.g., permission issue) → the build was already triggered on OBS, so on the next successful run the same commit will trigger again (harmless duplicate build).
+| Failure scenario | What happens to `.last_commit` | Effect |
+|---|---|---|
+| GitLab API unreachable / rate-limited | ❌ Not updated | Safe retry next run |
+| GitLab API returns unexpected JSON | ❌ Not updated | Safe retry next run |
+| OBS trigger returns non-200 | ❌ Not updated | Safe retry next run |
+| OBS trigger succeeds, `git push` fails | ✅ Already triggered on OBS | Harmless duplicate build on next successful push |
+| Everything succeeds | ✅ Updated with new SHA | Normal operation |
 
-No partial state leaves the watcher stuck on a stale commit.
+The worst-case outcome is a **duplicate OBS build** for the same upstream commit — harmless. There is no scenario where a new commit is silently skipped forever or where the watcher gets stuck in a broken state.
+
+---
+
+## ❓ FAQ
+
+<details>
+<summary><strong>Does this need a GitLab token?</strong></summary>
+
+No. The GitLab branch info endpoint (`/api/v4/projects/:id/repository/branches/:branch`) is public for public projects. OpenRGB's repository is public, so no authentication is required.
+
+</details>
+
+<details>
+<summary><strong>What if OpenRGB moves to a different branch?</strong></summary>
+
+Update the branch name in the `curl` call inside `watch-and-build.yml` — change `master` to whatever the new default branch is called.
+
+</details>
+
+<details>
+<summary><strong>Can I watch multiple packages?</strong></summary>
+
+Yes. Duplicate the workflow file and adjust the GitLab project URL, OBS secrets, and `.last_commit` filename (e.g. `.last_commit_pkgname`) for each package. Each watcher is fully independent.
+
+</details>
+
+<details>
+<summary><strong>Will this work if my OBS package uses a different source service?</strong></summary>
+
+The trigger endpoint is service-agnostic — OBS will re-run whatever `_service` file is present in your package, regardless of the service type. It works with `obs_scm`, `tar_scm`, `download_url`, etc.
+
+</details>
+
+<details>
+<summary><strong>How do I stop the watcher without deleting the repo?</strong></summary>
+
+Go to **Actions → Watch OpenRGB → Trigger OBS Build → ⋯ (three dots menu) → Disable workflow**. Re-enable it the same way when ready.
+
+</details>
 
 ---
 
 ## 🔗 Links
 
-- [OpenRGB upstream repository](https://gitlab.com/CalcProgrammer1/OpenRGB)
-- [OBS package home:itachi_re/openrgb](https://build.opensuse.org/package/show/home:itachi_re/openrgb)
+| Resource | URL |
+|---|---|
+| OpenRGB upstream (GitLab) | https://gitlab.com/CalcProgrammer1/OpenRGB |
+| OBS package (home:itachi_re) | https://build.opensuse.org/package/show/home:itachi_re/openrgb |
+| OBS token API docs | https://openbuildservice.org/help/manuals/obs-user-guide/cha.obs.source_service.html |
+| GitHub Actions cron syntax | https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule |
+| `osc` CLI reference | https://en.opensuse.org/openSUSE:OSC |
 
 ---
 
-<p align="center">
-  <sub>Built with ❤️ for the openSUSE community · PRs welcome</sub>
-</p>
-```
+<div align="center">
+
+**Built with ❤️ for the openSUSE community**
+
+*Contributions, issues, and PRs are welcome.*
+
+[![GitHub Issues](https://img.shields.io/github/issues/itachi-re/openrgb-obs-watcher?style=flat-square)](https://github.com/itachi-re/openrgb-obs-watcher/issues)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/itachi-re/openrgb-obs-watcher/pulls)
+
+</div>
