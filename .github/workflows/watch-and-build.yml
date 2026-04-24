@@ -4,8 +4,17 @@ on:
   schedule:
     # Runs every hour at :00. Change to e.g. '*/30 * * * *' for every 30 min.
     - cron: '0 * * * *'
-  # Lets you trigger manually from Actions tab any time
+
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force OBS rebuild even if no new commits'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 # Allow the built-in GITHUB_TOKEN to commit .last_commit back to this repo
 permissions:
@@ -48,11 +57,16 @@ jobs:
         run: |
           LATEST="${{ steps.upstream.outputs.sha }}"
           KNOWN=$(cat .last_commit 2>/dev/null | tr -d '[:space:]')
+          FORCE="${{ github.event.inputs.force_rebuild }}"
 
-          echo "Latest : $LATEST"
-          echo "Known  : ${KNOWN:-<none yet>}"
+          echo "Latest  : $LATEST"
+          echo "Known   : ${KNOWN:-<none yet>}"
+          echo "Force   : ${FORCE:-false}"
 
-          if [ "$LATEST" = "$KNOWN" ]; then
+          if [ "$FORCE" = "true" ]; then
+            echo "⚡ Force rebuild requested — skipping SHA comparison."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$LATEST" = "$KNOWN" ]; then
             echo "✅ No new commits. Nothing to do."
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
