@@ -1,6 +1,10 @@
 name: Watch OpenRGB → Trigger OBS Build
 
 on:
+  push:
+    branches:
+      - main
+      - master
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
@@ -16,6 +20,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  OBS_PROJECT: home:itachi_re
+  OBS_PACKAGE: openrgb
 
 jobs:
   watch-and-trigger:
@@ -65,15 +73,26 @@ jobs:
         if: steps.compare.outputs.changed == 'true'
         run: |
           echo "🚀 Triggering OBS source service run..."
+          echo "   Project : $OBS_PROJECT"
+          echo "   Package : $OBS_PACKAGE"
+
+          # URL-encode so colons in the project name don't break the query string
+          PROJECT_ENC=$(python3 -c \
+            "import urllib.parse; print(urllib.parse.quote('${OBS_PROJECT}'))")
+          PACKAGE_ENC=$(python3 -c \
+            "import urllib.parse; print(urllib.parse.quote('${OBS_PACKAGE}'))")
+
           HTTP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
             -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
             -X POST \
-            "https://build.opensuse.org/trigger/runservice?project=${{ secrets.OBS_PROJECT }}&package=${{ secrets.OBS_PACKAGE }}")
+            "https://build.opensuse.org/trigger/runservice?project=${PROJECT_ENC}&package=${PACKAGE_ENC}")
+
           echo "HTTP: $HTTP"
           echo "Response:"
           cat /tmp/resp.txt
+
           if [ "$HTTP" != "200" ]; then
-            echo "❌ OBS trigger failed"
+            echo "❌ OBS trigger failed (HTTP $HTTP)"
             exit 1
           fi
           echo "✅ OBS build triggered successfully."
