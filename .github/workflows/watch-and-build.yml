@@ -75,23 +75,26 @@ jobs:
           fi
 
       # ── 4. Trigger OBS runservice (only when there's something new) ─────────
-      - name: Trigger OBS build
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          echo "🚀 Triggering OBS source service run..."
-          HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
-            -X POST \
-            "https://build.opensuse.org/trigger/runservice?project=${{ secrets.OBS_PROJECT }}&package=${{ secrets.OBS_PACKAGE }}")
+  - name: Trigger OBS build
+  if: steps.compare.outputs.changed == 'true'
+  run: |
+    echo "🚀 Triggering OBS source service run..."
 
-          echo "OBS HTTP response: $HTTP"
+    HTTP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
+      -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
+      -X POST \
+      "https://build.opensuse.org/trigger/runservice?project=${{ secrets.OBS_PROJECT }}&package=${{ secrets.OBS_PACKAGE }}")
 
-          if [ "$HTTP" != "200" ]; then
-            echo "❌ OBS trigger failed (HTTP $HTTP). NOT updating .last_commit — will retry next run."
-            exit 1
-          fi
+    echo "HTTP: $HTTP"
+    echo "Response:"
+    cat /tmp/resp.txt
 
-          echo "✅ OBS build triggered successfully."
+    if [ "$HTTP" != "200" ]; then
+      echo "❌ OBS trigger failed"
+      exit 1
+    fi
+
+    echo "✅ OBS build triggered successfully."
 
       # ── 5. Persist the new SHA so we don't re-trigger on the next run ───────
       - name: Update .last_commit
