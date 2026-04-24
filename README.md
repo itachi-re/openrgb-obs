@@ -1,12 +1,12 @@
-# 🔄 openrgb-obs-watcher
+# 🔄 openrgb-obs
 
 <div align="center">
 
-[![Watcher Status](https://img.shields.io/github/actions/workflow/status/itachi-re/openrgb-obs-watcher/watch-and-build.yml?branch=main&style=for-the-badge&label=Watcher&logo=github-actions&logoColor=white)](https://github.com/itachi-re/openrgb-obs-watcher/actions/workflows/watch-and-build.yml)
+[![Watcher Status](https://img.shields.io/github/actions/workflow/status/itachi-re/openrgb-obs/watch-and-build.yml?branch=main&style=for-the-badge&label=Watcher&logo=github-actions&logoColor=white)](https://github.com/itachi-re/openrgb-obs/actions/workflows/watch-and-build.yml)
 [![OBS Package](https://img.shields.io/badge/OBS-home:itachi__re:openrgb-73BA25?style=for-the-badge&logo=opensuse&logoColor=white)](https://build.opensuse.org/package/show/home:itachi_re/openrgb)
 [![GitLab Upstream](https://img.shields.io/badge/Upstream-OpenRGB-FC6D26?style=for-the-badge&logo=gitlab&logoColor=white)](https://gitlab.com/CalcProgrammer1/OpenRGB)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
-[![Last Commit](https://img.shields.io/github/last-commit/itachi-re/openrgb-obs-watcher?style=for-the-badge&logo=git&logoColor=white)](https://github.com/itachi-re/openrgb-obs-watcher/commits/main)
+[![Last Commit](https://img.shields.io/github/last-commit/itachi-re/openrgb-obs?style=for-the-badge&logo=git&logoColor=white)](https://github.com/itachi-re/openrgb-obs/commits/main)
 
 <br/>
 
@@ -45,7 +45,7 @@
 
 OBS's built-in `_service` file (`obs_scm`) can re-fetch the latest upstream source — **but only when manually triggered or when the package itself changes.** This means your locally-hosted OpenRGB package can silently fall days or weeks behind the GitLab `master` branch without anyone noticing.
 
-`openrgb-obs-watcher` solves this with a minimal, self-contained GitHub Actions workflow:
+`openrgb-obs` solves this with a minimal, self-contained GitHub Actions workflow:
 
 | Without this watcher | With this watcher |
 |---|---|
@@ -182,7 +182,7 @@ The workflow will run on its hourly schedule automatically. To trigger a manual 
 ## 📁 Repository structure
 
 ```
-openrgb-obs-watcher/
+openrgb-obs/
 │
 ├── .github/
 │   └── workflows/
@@ -303,7 +303,7 @@ Go to **Actions → Watch OpenRGB → Trigger OBS Build → ⋯ (three dots menu
 
 *Contributions, issues, and PRs are welcome.*
 
-[![GitHub Issues](https://img.shields.io/github/issues/itachi-re/openrgb-obs-watcher?style=flat-square)](https://github.com/itachi-re/openrgb-obs-watcher/issues)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/itachi-re/openrgb-obs-watcher/pulls)
+[![GitHub Issues](https://img.shields.io/github/issues/itachi-re/openrgb-obs?style=flat-square)](https://github.com/itachi-re/openrgb-obs/issues)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/itachi-re/openrgb-obs/pulls)
 
 </div>
