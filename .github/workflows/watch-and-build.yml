@@ -5,8 +5,10 @@ on:
     branches:
       - main
       - master
+
   schedule:
     - cron: '0 * * * *'
+
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -28,6 +30,7 @@ env:
 jobs:
   watch-and-trigger:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout watcher repo
         uses: actions/checkout@v5
@@ -35,17 +38,15 @@ jobs:
       - name: Fetch latest upstream commit SHA
         id: upstream
         run: |
-          RESPONSE=$(curl -sf \
-            "https://gitlab.com/api/v4/projects/CalcProgrammer1%2FOpenRGB/repository/branches/master")
-          if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
-            echo "❌ GitLab API call failed — aborting."
+          LATEST=$(git ls-remote \
+            https://gitlab.com/CalcProgrammer1/OpenRGB.git \
+            refs/heads/master | awk '{print $1}')
+
+          if [ -z "$LATEST" ]; then
+            echo "❌ Could not fetch upstream SHA — aborting."
             exit 1
           fi
-          LATEST=$(echo "$RESPONSE" | jq -r '.commit.id')
-          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-            echo "❌ Could not parse commit SHA from API response — aborting."
-            exit 1
-          fi
+
           echo "✅ Latest upstream SHA: $LATEST"
           echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
 
@@ -55,15 +56,19 @@ jobs:
           LATEST="${{ steps.upstream.outputs.sha }}"
           KNOWN=$(cat .last_commit 2>/dev/null | tr -d '[:space:]')
           FORCE="${{ github.event.inputs.force_rebuild }}"
+
           echo "Latest  : $LATEST"
           echo "Known   : ${KNOWN:-<none yet>}"
           echo "Force   : ${FORCE:-false}"
+
           if [ "$FORCE" = "true" ]; then
             echo "⚡ Force rebuild requested — skipping SHA comparison."
             echo "changed=true" >> "$GITHUB_OUTPUT"
+
           elif [ "$LATEST" = "$KNOWN" ]; then
             echo "✅ No new commits. Nothing to do."
             echo "changed=false" >> "$GITHUB_OUTPUT"
+
           else
             echo "🆕 New commit detected!"
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -76,13 +81,15 @@ jobs:
           echo "   Project : $OBS_PROJECT"
           echo "   Package : $OBS_PACKAGE"
 
-          # URL-encode so colons in the project name don't break the query string
           PROJECT_ENC=$(python3 -c \
             "import urllib.parse; print(urllib.parse.quote('${OBS_PROJECT}'))")
+
           PACKAGE_ENC=$(python3 -c \
             "import urllib.parse; print(urllib.parse.quote('${OBS_PACKAGE}'))")
 
-          HTTP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
+          HTTP=$(curl -s \
+            -o /tmp/resp.txt \
+            -w "%{http_code}" \
             -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
             -X POST \
             "https://build.opensuse.org/trigger/runservice?project=${PROJECT_ENC}&package=${PACKAGE_ENC}")
@@ -95,6 +102,7 @@ jobs:
             echo "❌ OBS trigger failed (HTTP $HTTP)"
             exit 1
           fi
+
           echo "✅ OBS build triggered successfully."
 
       - name: Update .last_commit
@@ -102,10 +110,17 @@ jobs:
         run: |
           LATEST="${{ steps.upstream.outputs.sha }}"
           SHORT="${LATEST:0:8}"
+
           echo "$LATEST" > .last_commit
-          git config user.name  "github-actions[bot]"
+
+          git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add .last_commit
+
+          git diff --cached --quiet && exit 0
+
           git commit -m "chore: built upstream commit ${SHORT}"
           git push
+
           echo "✅ .last_commit updated to ${LATEST}"
