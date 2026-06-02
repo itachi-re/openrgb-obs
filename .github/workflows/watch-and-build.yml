@@ -7,13 +7,12 @@
           echo "⏳ Polling OBS — max 60 min..."
 
           for i in $(seq 1 60); do
-
             HTTP=$(curl -s \
               -o /tmp/obs_status.xml \
               -w "%{http_code}" \
               "https://build.opensuse.org/build/${OBS_PROJECT}/${OBS_REPO}/${OBS_ARCH}/${OBS_PACKAGE}/_status")
 
-            echo "  [$(date -u +%H:%M:%S)] HTTP=$HTTP (attempt $i/60)"
+            echo "[$(date -u +%H:%M:%S)] HTTP=$HTTP (attempt $i/60)"
 
             if [ "$HTTP" != "200" ]; then
               echo "⚠️ OBS returned HTTP $HTTP"
@@ -27,50 +26,39 @@
               continue
             fi
 
-            STATUS=$(python3 <<'PY'
+            STATUS=$(python3 -c "
 import xml.etree.ElementTree as ET
-
 try:
-    with open("/tmp/obs_status.xml", "rb") as f:
-        root = ET.parse(f).getroot()
-
-    print(root.get("code", "unknown"))
-
+    root = ET.parse('/tmp/obs_status.xml').getroot()
+    print(root.get('code', 'unknown'))
 except Exception:
-    print("invalid")
-PY
-)
+    print('invalid')
+")
 
-            echo "  Status=$STATUS"
+            echo "Status=$STATUS"
 
-            case "$STATUS" in
+            case \"$STATUS\" in
               succeeded)
-                echo "✅ Build succeeded!"
+                echo '✅ Build succeeded!'
                 exit 0
                 ;;
 
               failed|unresolvable|broken)
-                echo "❌ Build failed — status: $STATUS"
-
-                echo
-                echo "===== OBS RESPONSE ====="
+                echo \"❌ Build failed — status: $STATUS\"
                 cat /tmp/obs_status.xml
-                echo
-                echo "========================"
-
                 exit 1
                 ;;
 
               scheduled|building|blocked|dispatching|signing|finished)
                 ;;
-                
+
               invalid)
-                echo "⚠️ Invalid XML received from OBS"
+                echo '⚠️ Invalid XML'
                 cat /tmp/obs_status.xml
                 ;;
 
               *)
-                echo "⚠️ Unknown status: $STATUS"
+                echo \"⚠️ Unknown status: $STATUS\"
                 cat /tmp/obs_status.xml
                 ;;
             esac
@@ -78,5 +66,5 @@ PY
             sleep 60
           done
 
-          echo "❌ Timed out after 60 minutes"
+          echo '❌ Timed out after 60 minutes'
           exit 1
