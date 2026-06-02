@@ -1,187 +1,82 @@
-name: Watch OpenRGB → Trigger OBS Build
-
-on:
-  push:
-    branches:
-      - main
-      - master
-  schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
-    inputs:
-      force_rebuild:
-        description: 'Force OBS rebuild even if no new commits'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-
-permissions:
-  contents: write
-
-env:
-  OBS_PROJECT: home:itachi_re
-  OBS_PACKAGE: openrgb
-  OBS_REPO: openSUSE_Tumbleweed
-  OBS_ARCH: x86_64
-
-jobs:
-  watch-and-trigger:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout watcher repo
-        uses: actions/checkout@v5
-
-      - name: Fetch latest upstream commit SHA
-        id: upstream
-        run: |
-          LATEST=$(git ls-remote \
-            https://gitlab.com/CalcProgrammer1/OpenRGB.git \
-            refs/heads/master | awk '{print $1}')
-          if [ -z "$LATEST" ]; then
-            echo "❌ Could not fetch upstream SHA — aborting."
-            exit 1
-          fi
-          echo "✅ Latest upstream SHA: $LATEST"
-          echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
-
-      - name: Compare with last built commit
-        id: compare
-        run: |
-          LATEST="${{ steps.upstream.outputs.sha }}"
-          KNOWN=$(cat .last_commit 2>/dev/null | tr -d '[:space:]')
-          FORCE="${{ github.event.inputs.force_rebuild }}"
-          echo "Latest  : $LATEST"
-          echo "Known   : ${KNOWN:-<none yet>}"
-          echo "Force   : ${FORCE:-false}"
-          if [ "$FORCE" = "true" ]; then
-            echo "⚡ Force rebuild requested — skipping SHA comparison."
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          elif [ "$LATEST" = "$KNOWN" ]; then
-            echo "✅ No new commits. Nothing to do."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "🆕 New commit detected!"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Trigger OBS source service
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          echo "🚀 Triggering OBS source service run..."
-          echo "   Project : $OBS_PROJECT"
-          echo "   Package : $OBS_PACKAGE"
-          PROJECT_ENC=$(python3 -c \
-            "import urllib.parse; print(urllib.parse.quote('${OBS_PROJECT}'))")
-          PACKAGE_ENC=$(python3 -c \
-            "import urllib.parse; print(urllib.parse.quote('${OBS_PACKAGE}'))")
-          HTTP=$(curl -s \
-            -o /tmp/resp.txt \
-            -w "%{http_code}" \
-            -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
-            -X POST \
-            "https://build.opensuse.org/trigger/runservice?project=${PROJECT_ENC}&package=${PACKAGE_ENC}")
-          echo "HTTP: $HTTP"
-          echo "Response:"
-          cat /tmp/resp.txt
-          if [ "$HTTP" != "200" ]; then
-            echo "❌ OBS trigger failed (HTTP $HTTP)"
-            exit 1
-          fi
-          echo "✅ OBS build triggered successfully."
-
       - name: Wait for OBS build to complete
         if: steps.compare.outputs.changed == 'true'
         run: |
+          echo "Waiting 30 seconds for OBS scheduler..."
+          sleep 30
+
           echo "⏳ Polling OBS — max 60 min..."
+
           for i in $(seq 1 60); do
-            STATUS=$(curl -sf \
-              "https://build.opensuse.org/build/${OBS_PROJECT}/${OBS_REPO}/${OBS_ARCH}/${OBS_PACKAGE}/_status" \
-              | python3 -c "
-          import sys, xml.etree.ElementTree as ET
-          print(ET.parse(sys.stdin).getroot().get('code', 'unknown'))
-          ")
-            echo "  [$(date -u +%H:%M:%S)] status=$STATUS  (attempt $i/60)"
+
+            HTTP=$(curl -s \
+              -o /tmp/obs_status.xml \
+              -w "%{http_code}" \
+              "https://build.opensuse.org/build/${OBS_PROJECT}/${OBS_REPO}/${OBS_ARCH}/${OBS_PACKAGE}/_status")
+
+            echo "  [$(date -u +%H:%M:%S)] HTTP=$HTTP (attempt $i/60)"
+
+            if [ "$HTTP" != "200" ]; then
+              echo "⚠️ OBS returned HTTP $HTTP"
+              sleep 60
+              continue
+            fi
+
+            if [ ! -s /tmp/obs_status.xml ]; then
+              echo "⚠️ Empty OBS response"
+              sleep 60
+              continue
+            fi
+
+            STATUS=$(python3 <<'PY'
+import xml.etree.ElementTree as ET
+
+try:
+    with open("/tmp/obs_status.xml", "rb") as f:
+        root = ET.parse(f).getroot()
+
+    print(root.get("code", "unknown"))
+
+except Exception:
+    print("invalid")
+PY
+)
+
+            echo "  Status=$STATUS"
+
             case "$STATUS" in
               succeeded)
                 echo "✅ Build succeeded!"
                 exit 0
                 ;;
+
               failed|unresolvable|broken)
                 echo "❌ Build failed — status: $STATUS"
+
+                echo
+                echo "===== OBS RESPONSE ====="
+                cat /tmp/obs_status.xml
+                echo
+                echo "========================"
+
                 exit 1
                 ;;
-              scheduled|building|blocked|dispatching)
+
+              scheduled|building|blocked|dispatching|signing|finished)
                 ;;
+                
+              invalid)
+                echo "⚠️ Invalid XML received from OBS"
+                cat /tmp/obs_status.xml
+                ;;
+
               *)
-                echo "⚠️  Unknown status: $STATUS — continuing to poll."
+                echo "⚠️ Unknown status: $STATUS"
+                cat /tmp/obs_status.xml
                 ;;
             esac
+
             sleep 60
           done
+
           echo "❌ Timed out after 60 minutes"
           exit 1
-
-      - name: Download RPM artifacts from OBS
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          mkdir -p dist
-          # OBS CDN path uses colon-slash notation: home:foo → home:/foo
-          OBS_PROJECT_PATH="${OBS_PROJECT/:/:/}"
-          curl -sf \
-            "https://build.opensuse.org/build/${OBS_PROJECT}/${OBS_REPO}/${OBS_ARCH}/${OBS_PACKAGE}" \
-          | python3 -c "
-          import sys, xml.etree.ElementTree as ET
-          root = ET.parse(sys.stdin).getroot()
-          for b in root.findall('binary'):
-              f = b.get('filename', '')
-              if (
-                  f.endswith('.rpm')
-                  and not f.endswith('.src.rpm')
-                  and 'debuginfo' not in f
-                  and 'debugsource' not in f
-              ):
-                  print(f)
-          " | while read -r RPM; do
-            echo "⬇️  $RPM"
-            curl -sf \
-              -o "dist/$RPM" \
-              "https://download.opensuse.org/repositories/${OBS_PROJECT_PATH}/${OBS_REPO}/${OBS_ARCH}/$RPM"
-          done
-          ls -lh dist/
-
-      - name: Verify RPMs downloaded
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          COUNT=$(find dist -name '*.rpm' | wc -l)
-          echo "RPMs found: $COUNT"
-          if [ "$COUNT" -eq 0 ]; then
-            echo "❌ No RPMs found in dist/ — aborting release."
-            exit 1
-          fi
-          echo "✅ $COUNT RPM(s) ready for release."
-
-      - name: Update .last_commit
-        if: steps.compare.outputs.changed == 'true'
-        run: |
-          LATEST="${{ steps.upstream.outputs.sha }}"
-          SHORT="${LATEST:0:8}"
-          echo "$LATEST" > .last_commit
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .last_commit
-          git diff --cached --quiet && exit 0
-          git commit -m "chore: built upstream commit ${SHORT}"
-          git push
-          echo "✅ .last_commit updated to ${LATEST}"
-
-      - name: Create GitHub Release
-        if: steps.compare.outputs.changed == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: openrgb-${{ steps.upstream.outputs.sha }}
-          name: OpenRGB build ${{ steps.upstream.outputs.sha }}
-          generate_release_notes: true
-          files: dist/*.rpm
