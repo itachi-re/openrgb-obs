@@ -103,7 +103,7 @@ jobs:
             -w "%{http_code}" \
             -H "Authorization: Token ${{ secrets.OBS_TOKEN }}" \
             -X POST \
-            "https://build.opensuse.org/trigger/runservice?project=${PROJECT_ENC}&package=${PACKAGE_ENC}")
+            "https://api.opensuse.org/trigger/runservice?project=${PROJECT_ENC}&package=${PACKAGE_ENC}")
 
           echo "HTTP: $HTTP"
           echo "Response:"
