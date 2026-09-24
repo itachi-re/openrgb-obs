@@ -40,7 +40,7 @@ jobs:
 
     steps:
       - name: Checkout watcher repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Fetch latest upstream commit SHA
         id: upstream
