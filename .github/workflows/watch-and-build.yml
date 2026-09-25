@@ -47,9 +47,15 @@ jobs:
       - name: Fetch latest upstream commit SHA (with retry + GitHub fallback)
         id: upstream
         run: |
-          fetch_sha () {
+          fetch_sha() {
             local url="$1"
-            git ls-remote "$url" refs/heads/master 2>/dev/null | awk '{print $1}'
+            local sha
+
+            sha=$(git ls-remote "$url" refs/heads/master 2>/dev/null | awk 'NF { print $1; exit }')
+
+            if [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              printf '%s\n' "$sha"
+            fi
           }
 
           LATEST=""
@@ -61,18 +67,18 @@ jobs:
               echo "✅ Got SHA from GitLab on attempt $i: $LATEST"
               break
             fi
-            echo "⚠️ GitLab attempt $i failed (transient error, e.g. 503). Retrying in $((i*5))s..."
+            echo "⚠️ GitLab attempt $i failed or returned an invalid SHA. Retrying in $((i*5))s..."
             sleep $((i * 5))
           done
 
-          # Fallback to the GitHub mirror if GitLab never responded
+          # Fallback to the GitHub mirror if GitLab never responded with a valid SHA
           if [ -z "$LATEST" ]; then
-            echo "⚠️ GitLab unreachable after 5 attempts — falling back to GitHub mirror."
+            echo "⚠️ GitLab unreachable/invalid after 5 attempts — falling back to GitHub mirror."
             LATEST=$(fetch_sha "$UPSTREAM_GITHUB")
           fi
 
           if [ -z "$LATEST" ]; then
-            echo "❌ Could not fetch upstream SHA from GitLab or GitHub mirror — aborting."
+            echo "❌ Could not obtain a valid upstream SHA from GitLab or GitHub mirror — aborting."
             exit 1
           fi
 
