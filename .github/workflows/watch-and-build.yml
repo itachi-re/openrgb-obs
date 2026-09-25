@@ -27,6 +27,8 @@ permissions:
 env:
   OBS_PROJECT: home:itachi_re
   OBS_PACKAGE: openrgb
+  UPSTREAM_GITLAB: https://gitlab.com/CalcProgrammer1/OpenRGB.git
+  UPSTREAM_GITHUB: https://github.com/CalcProgrammer1/OpenRGB.git
 
 # Prevents multiple runs of this workflow from executing simultaneously
 concurrency:
@@ -42,15 +44,35 @@ jobs:
       - name: Checkout watcher repo
         uses: actions/checkout@v7
 
-      - name: Fetch latest upstream commit SHA
+      - name: Fetch latest upstream commit SHA (with retry + GitHub fallback)
         id: upstream
         run: |
-          LATEST=$(git ls-remote \
-            https://gitlab.com/CalcProgrammer1/OpenRGB.git \
-            refs/heads/master | awk '{print $1}')
+          fetch_sha () {
+            local url="$1"
+            git ls-remote "$url" refs/heads/master 2>/dev/null | awk '{print $1}'
+          }
+
+          LATEST=""
+
+          # Try GitLab first, up to 5 attempts with backoff
+          for i in 1 2 3 4 5; do
+            LATEST=$(fetch_sha "$UPSTREAM_GITLAB")
+            if [ -n "$LATEST" ]; then
+              echo "✅ Got SHA from GitLab on attempt $i: $LATEST"
+              break
+            fi
+            echo "⚠️ GitLab attempt $i failed (transient error, e.g. 503). Retrying in $((i*5))s..."
+            sleep $((i * 5))
+          done
+
+          # Fallback to the GitHub mirror if GitLab never responded
+          if [ -z "$LATEST" ]; then
+            echo "⚠️ GitLab unreachable after 5 attempts — falling back to GitHub mirror."
+            LATEST=$(fetch_sha "$UPSTREAM_GITHUB")
+          fi
 
           if [ -z "$LATEST" ]; then
-            echo "❌ Could not fetch upstream SHA — aborting."
+            echo "❌ Could not fetch upstream SHA from GitLab or GitHub mirror — aborting."
             exit 1
           fi
 
@@ -61,13 +83,13 @@ jobs:
         id: compare
         run: |
           LATEST="${{ steps.upstream.outputs.sha }}"
-          
+
           # Safely check if file exists to prevent errors on first run
           KNOWN=""
           if [ -f .last_commit ]; then
             KNOWN=$(cat .last_commit | tr -d '[:space:]')
           fi
-          
+
           FORCE="${{ github.event.inputs.force_rebuild }}"
 
           echo "Latest  : $LATEST"
@@ -94,7 +116,6 @@ jobs:
           echo "   Project : $OBS_PROJECT"
           echo "   Package : $OBS_PACKAGE"
 
-          # Using jq for much cleaner inline URL encoding
           PROJECT_ENC=$(jq -rn --arg x "$OBS_PROJECT" '$x|@uri')
           PACKAGE_ENC=$(jq -rn --arg x "$OBS_PACKAGE" '$x|@uri')
 
@@ -129,7 +150,6 @@ jobs:
 
           git add .last_commit
 
-          # Cleaner bash syntax for the commit/push
           if ! git diff --cached --quiet; then
             git commit -m "chore: built upstream commit ${SHORT}"
             git push
